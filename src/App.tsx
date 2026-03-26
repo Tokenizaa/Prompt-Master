@@ -32,7 +32,13 @@ import {
   LogOut,
   Mail,
   Lock,
-  User as UserIcon
+  User as UserIcon,
+  Bold,
+  Italic,
+  List,
+  ListOrdered,
+  Link as LinkIcon,
+  Code
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -42,6 +48,8 @@ import { supabase } from './lib/supabase';
 import { User } from '@supabase/supabase-js';
 import { DEFAULT_TEMPLATES, ICON_MAP, Template } from './config/templates';
 import * as LucideIcons from 'lucide-react';
+import { io, Socket } from 'socket.io-client';
+import { queryKnowledgeBase } from './services/ragService';
 
 interface GeneratedResult {
   id?: string;
@@ -52,7 +60,7 @@ interface GeneratedResult {
   rating?: number;
 }
 
-type View = 'generator' | 'history' | 'settings';
+type View = 'generator' | 'history' | 'settings' | 'chat';
 type AuthView = 'login' | 'register';
 
 export default function App() {
@@ -79,6 +87,7 @@ export default function App() {
   const [grokKey, setGrokKey] = useState(() => localStorage.getItem('grok_key') || '');
   const [ollamaUrl, setOllamaUrl] = useState(() => localStorage.getItem('ollama_url') || 'http://localhost:11434');
   const [activeModel, setActiveModel] = useState(() => localStorage.getItem('active_model') || 'gemini');
+  const [isHighThinking, setIsHighThinking] = useState(() => localStorage.getItem('is_high_thinking') === 'true');
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window !== 'undefined') {
@@ -87,6 +96,14 @@ export default function App() {
     return 'light';
   });
   const resultRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Chat State
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
 
   // Auth Form State
   const [email, setEmail] = useState('');
@@ -164,7 +181,71 @@ export default function App() {
     localStorage.setItem('grok_key', grokKey);
     localStorage.setItem('ollama_url', ollamaUrl);
     localStorage.setItem('active_model', activeModel);
-  }, [hfToken, grokKey, ollamaUrl, activeModel]);
+    localStorage.setItem('is_high_thinking', String(isHighThinking));
+  }, [hfToken, grokKey, ollamaUrl, activeModel, isHighThinking]);
+
+  useEffect(() => {
+    if (user && isAuthorized) {
+      const newSocket = io(window.location.origin);
+      setSocket(newSocket);
+
+      newSocket.on('chat:message', (msg) => {
+        setChatMessages((prev) => [...prev, msg]);
+      });
+
+      // Fetch initial messages from Supabase
+      const fetchMessages = async () => {
+        setIsChatLoading(true);
+        const { data, error } = await supabase
+          .from('messages')
+          .select('*')
+          .order('created_at', { ascending: true })
+          .limit(100);
+        
+        if (data) setChatMessages(data);
+        setIsChatLoading(false);
+      };
+      fetchMessages();
+
+      return () => {
+        newSocket.disconnect();
+      };
+    }
+  }, [user, isAuthorized]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages, activeView]);
+
+  const sendChatMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!socket || !newMessage.trim() || !user) return;
+
+    const content = newMessage.trim();
+    const msgData = {
+      userId: user.id,
+      displayName: user.user_metadata?.display_name || user.email?.split('@')[0],
+      content: content
+    };
+
+    socket.emit('chat:message', msgData);
+    setNewMessage('');
+
+    // AI Trigger
+    if (content.toLowerCase().startsWith('/ai ')) {
+      const query = content.slice(4);
+      try {
+        const aiResponse = await queryKnowledgeBase(query);
+        socket.emit('chat:message', {
+          userId: 'system-bot',
+          displayName: 'Meta-Architect (AI)',
+          content: aiResponse
+        });
+      } catch (err: any) {
+        toast.error(`Erro na IA: ${err.message}`);
+      }
+    }
+  };
 
   useEffect(() => {
     if (user && activeView === 'settings' && role === 'superadm') {
@@ -199,6 +280,152 @@ export default function App() {
   const getIcon = (iconName: string) => {
     const Icon = ICON_MAP[iconName] || (LucideIcons as any)[iconName] || LucideIcons.HelpCircle;
     return <Icon className="w-4 h-4" />;
+  };
+
+  const suggestedTemplates = React.useMemo(() => {
+    if (!context.trim() || context.length < 5) return [];
+    
+    const lowerContext = context.toLowerCase();
+    
+    // Define categories with keywords and structural patterns for scoring
+    const categories = [
+      { 
+        id: 'frontend', 
+        templateTitles: ['Auditor Frontend'],
+        keywords: ['react', 'hooks', 'frontend', 'component', 'props', 'state', 'useeffect', 'usememo', 'usecallback', 'jsx', 'tsx', 'tailwind', 'css', 'html', 'dom', 'browser', 'rendering', 'vdom', 'interface', 'frontend architect'],
+        patterns: [/const\s+\[\w+,\s*set\w+\]\s*=\s*useState/i, /useEffect\s*\(/i, /import\s+.*\s+from\s+['"]react['"]/i, /<[A-Z]\w+\s*.*\/>/g]
+      },
+      {
+        id: 'backend',
+        templateTitles: ['Auditor Backend'],
+        keywords: ['api', 'node', 'express', 'backend', 'middleware', 'auth', 'jwt', 'rest', 'fastify', 'nest', 'server', 'endpoint', 'http', 'json', 'request', 'response', 'payload', 'cors', 'helmet', 'backend architect'],
+        patterns: [/app\.(get|post|put|delete|patch)\s*\(/i, /router\.(get|post|put|delete|patch)\s*\(/i, /req,\s*res/i, /process\.env/i, /module\.exports/i, /export\s+default\s+async\s+function/i]
+      },
+      {
+        id: 'database',
+        templateTitles: ['DBA Architect'],
+        keywords: ['sql', 'postgres', 'query', 'index', 'database', 'table', 'select', 'join', 'where', 'insert', 'update', 'delete', 'from', 'schema', 'rls', 'row level security', 'primary key', 'foreign key', 'migration', 'dba'],
+        patterns: [/SELECT\s+.*\s+FROM/i, /INSERT\s+INTO/i, /UPDATE\s+.*\s+SET/i, /CREATE\s+TABLE/i, /ALTER\s+TABLE/i, /JOIN\s+.*\s+ON/i]
+      },
+      {
+        id: 'marketing',
+        templateTitles: ['Estrategista de Marketing'],
+        keywords: ['marketing', 'vendas', 'funil', 'campanha', 'anúncio', 'ads', 'roi', 'cac', 'ltv', 'público', 'persona', 'growth', 'tração', 'conversão', 'copy', 'sales', 'funnel', 'landing page', 'leads', 'proposta de valor', 'uvp'],
+        patterns: [/público-alvo/i, /funil de vendas/i, /proposta única de valor/i, /growth hacking/i]
+      },
+      {
+        id: 'seo',
+        templateTitles: ['Redator SEO Sênior'],
+        keywords: ['seo', 'blog', 'artigo', 'palavra-chave', 'escrita', 'texto', 'google', 'ranquear', 'autoridade', 'lsi', 'h1', 'h2', 'meta-descrição', 'backlink', 'serp', 'e-e-a-t', 'search intent', 'intenção de busca'],
+        patterns: [/^# /m, /^## /m, /^### /m, /palavra-chave/i, /intenção de busca/i, /topic clusters/i]
+      },
+      {
+        id: 'ux',
+        templateTitles: ['UX Designer Sênior'],
+        keywords: ['ux', 'ui', 'design', 'interface', 'usabilidade', 'usuário', 'fricção', 'heurística', 'nielsen', 'acessibilidade', 'wcag', 'protótipo', 'wireframe', 'user flow', 'fluxo de usuário', 'experiência do usuário', 'atrito', 'psicologia cognitiva'],
+        patterns: [/fluxo de usuário/i, /experiência do usuário/i, /heurísticas de nielsen/i, /product designer/i]
+      },
+      {
+        id: 'agile',
+        templateTitles: ['Gerente de Projetos Ágeis'],
+        keywords: ['projeto', 'sprint', 'backlog', 'scrum', 'ágil', 'kanban', 'story', 'critérios', 'agile', 'master', 'coach', 'okr', 'user story', 'daily', 'retrospective', 'planning', 'burndown', 'velocity'],
+        patterns: [/user story/i, /critérios de aceite/i, /definition of done/i, /dod/i, /agile coach/i]
+      },
+      {
+        id: 'data',
+        templateTitles: ['Analista de Dados B.I.'],
+        keywords: ['dados', 'métrica', 'dashboard', 'bi', 'estatística', 'planilha', 'insight', 'tendência', 'anomalia', 'visualização', 'business intelligence', 'kpi', 'data-driven', 'storytelling com dados', 'análise exploratória'],
+        patterns: [/insights acionáveis/i, /visualização de dados/i, /análise exploratória/i, /business intelligence/i]
+      },
+      {
+        id: 'legal',
+        templateTitles: ['Compliance LGPD'],
+        keywords: ['lgpd', 'privacidade', 'dados pessoais', 'lei', 'jurídico', 'conformidade', 'dpo', 'política', 'termos', 'legal', 'gdpr', 'titular', 'tratamento de dados', 'base legal', 'consentimento'],
+        patterns: [/Lei Geral de Proteção de Dados/i, /Art\.\s+\d+/i, /dados pessoais/i, /política de privacidade/i, /termos de uso/i]
+      }
+    ];
+
+    const scores = new Map<string, number>();
+
+    categories.forEach(cat => {
+      let score = 0;
+      let uniqueMatches = 0;
+      
+      // Keyword matching with weights
+      cat.keywords.forEach(kw => {
+        if (lowerContext.includes(kw)) {
+          uniqueMatches++;
+          // Multi-word keywords get more weight
+          const weight = kw.includes(' ') ? 3 : 1;
+          score += weight;
+        }
+      });
+
+      // Pattern matching (structural)
+      cat.patterns.forEach(pattern => {
+        const matches = lowerContext.match(pattern);
+        if (matches) {
+          score += matches.length * 5; // High weight for structural patterns
+        }
+      });
+
+      // Bonus for multiple unique keywords matching (combination)
+      if (uniqueMatches > 1) {
+        score += uniqueMatches * 2;
+      }
+
+      if (score > 0) {
+        cat.templateTitles.forEach(title => {
+          scores.set(title, (scores.get(title) || 0) + score);
+        });
+      }
+    });
+
+    // Sort templates by score descending
+    return templates
+      .filter(t => scores.has(t.title))
+      .sort((a, b) => (scores.get(b.title) || 0) - (scores.get(a.title) || 0));
+  }, [context, templates]);
+
+  const applyFormatting = (type: 'bold' | 'italic' | 'list' | 'list-ordered' | 'link' | 'code') => {
+    if (!textareaRef.current) return;
+
+    const textarea = textareaRef.current;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = context.substring(start, end);
+    let replacement = '';
+
+    switch (type) {
+      case 'bold':
+        replacement = `**${selectedText || 'texto'}**`;
+        break;
+      case 'italic':
+        replacement = `*${selectedText || 'texto'}*`;
+        break;
+      case 'list':
+        replacement = `\n- ${selectedText || 'item'}`;
+        break;
+      case 'list-ordered':
+        replacement = `\n1. ${selectedText || 'item'}`;
+        break;
+      case 'link':
+        replacement = `[${selectedText || 'texto'}](https://url.com)`;
+        break;
+      case 'code':
+        replacement = `\`${selectedText || 'código'}\``;
+        break;
+    }
+
+    const newContext = context.substring(0, start) + replacement + context.substring(end);
+    setContext(newContext);
+    
+    // Focus back and set selection
+    setTimeout(() => {
+      textarea.focus();
+      const newPos = start + replacement.length;
+      textarea.setSelectionRange(newPos, newPos);
+    }, 0);
   };
 
   const handleRate = async (id: string | undefined, rating: number) => {
@@ -337,8 +564,9 @@ export default function App() {
         activeModel,
         hfToken,
         grokKey,
-        ollamaUrl
-      });
+        ollamaUrl,
+        isHighThinking
+      }, assistantType);
       
       let identifiedType = 'Assistente Inteligente';
       const typeMatch = generatedText?.match(/Tipo de Assistente Identificado: (.*)/i);
@@ -614,6 +842,7 @@ export default function App() {
               {[
                 { id: 'generator', label: 'Gerador', icon: Wand2 },
                 { id: 'history', label: 'Histórico', icon: History },
+                { id: 'chat', label: 'Chat Ao Vivo', icon: MessageSquare },
                 { id: 'settings', label: 'Configurações', icon: Settings }
               ].map((item) => (
                 <button 
@@ -677,76 +906,140 @@ export default function App() {
             >
               {/* Left Column: Input Form */}
               <div className="lg:col-span-5 space-y-10">
-                <section className="relative">
-                  <div className="absolute -left-6 top-0 bottom-0 w-1 bg-blue-600 rounded-full hidden lg:block" />
-                  <h2 className="text-4xl font-bold mb-4 tracking-tight">Arquitetura de <br /> <span className="text-blue-600">Alta Performance</span></h2>
-                  <p className="text-gray-500 dark:text-gray-400 text-base leading-relaxed max-w-md">
-                    Transforme ideias brutas em instruções de nível enterprise. Aplicamos heurísticas de design e frameworks de engenharia de prompts automaticamente.
-                  </p>
+                <section>
+                  <h2 className="text-3xl font-bold tracking-tight">Novo Prompt</h2>
+                  <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">Configure as diretrizes do seu assistente.</p>
                 </section>
-
-                {/* UX Diagnosis Section (New) */}
-                <div className="p-6 rounded-3xl bg-blue-50/50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 space-y-4">
-                  <div className="flex items-center gap-3 text-blue-700 dark:text-blue-400">
-                    <ShieldCheck className="w-5 h-5" />
-                    <h3 className="text-sm font-bold uppercase tracking-wider">Diagnóstico de UX</h3>
-                  </div>
-                  <ul className="space-y-2">
-                    {[
-                      { label: 'Redução de Ruído', desc: 'Interface focada no fluxo de trabalho.' },
-                      { label: 'Hierarquia Visual', desc: 'Configuração → Processamento → Resultado.' },
-                      { label: 'Feedback em Tempo Real', desc: 'Status visual de cada etapa da IA.' }
-                    ].map((item, i) => (
-                      <li key={i} className="flex items-start gap-2">
-                        <div className="w-1 h-1 rounded-full bg-blue-400 mt-2 shrink-0" />
-                        <p className="text-[11px] text-gray-600 dark:text-gray-400">
-                          <span className="font-bold text-gray-800 dark:text-gray-200">{item.label}:</span> {item.desc}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
 
                 {/* Templates Section */}
                 <div className="space-y-3">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 flex items-center gap-2">
-                    <Bookmark className="w-3 h-3" /> Templates Recomendados
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    {templates.map((t, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => setContext(t.prompt)}
-                        className="p-3 text-left rounded-xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-[#16191F] hover:border-blue-500 dark:hover:border-blue-500 transition-all group"
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400 dark:text-gray-500 flex items-center gap-2">
+                      <Bookmark className="w-3 h-3" /> Templates Rápidos
+                    </label>
+                  </div>
+
+                  {/* Suggested Templates (Intelligent System) */}
+                  <AnimatePresence>
+                    {suggestedTemplates.length > 0 && (
+                      <motion.div 
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-2 overflow-hidden"
                       >
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="p-1.5 bg-blue-50 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                            {getIcon(t.iconName)}
-                          </div>
-                          <span className="text-xs font-bold">{t.title}</span>
+                        <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                          <Sparkles className="w-3 h-3" /> Sugestões Inteligentes
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          {suggestedTemplates.map((t, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => {
+                                setContext(t.prompt);
+                                setAssistantType(t.title);
+                                toast.info(`Template "${t.title}" aplicado`);
+                              }}
+                              className="px-3 py-1.5 rounded-full text-[10px] font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-100 dark:border-blue-800 hover:bg-blue-600 hover:text-white transition-all flex items-center gap-1.5"
+                            >
+                              {getIcon(t.iconName)}
+                              {t.title}
+                            </button>
+                          ))}
                         </div>
-                        <p className="text-[10px] text-gray-400 line-clamp-1">{t.description}</p>
-                      </button>
-                    ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  <div className="relative group">
+                    <select
+                      onChange={(e) => {
+                        const template = templates.find(t => t.title === e.target.value);
+                        if (template) {
+                          setContext(template.prompt);
+                          setAssistantType(template.title);
+                          toast.info(`Template "${template.title}" aplicado`);
+                        }
+                        e.target.value = ""; // Reset selection
+                      }}
+                      className="w-full appearance-none px-4 py-3 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#16191F] text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer hover:border-blue-500 transition-all pr-10"
+                      defaultValue=""
+                    >
+                      <option value="" disabled>Selecione um template pronto...</option>
+                      {templates.map((t, i) => (
+                        <option key={i} value={t.title}>
+                          {t.title}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                      <ChevronRight className="w-4 h-4 rotate-90" />
+                    </div>
                   </div>
                 </div>
 
                 <form onSubmit={handleGenerate} className="space-y-6">
                   <div className="space-y-2">
                     <label className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 flex items-center gap-2">
-                      <BookOpen className="w-3 h-3" /> Descrição, Contexto e Fontes
+                      <ShieldCheck className="w-3 h-3" /> Tipo de Assistente
                     </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Especialista em SEO, Auditor de Código..."
+                      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white dark:bg-[#16191F] dark:text-white"
+                      value={assistantType}
+                      onChange={(e) => setAssistantType(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 flex items-center gap-2">
+                        <BookOpen className="w-3 h-3" /> Descrição, Contexto e Fontes
+                      </label>
+                      
+                      {/* Markdown Toolbar */}
+                      <div className="flex items-center gap-1 bg-gray-50 dark:bg-gray-800/50 p-1 rounded-lg border border-gray-100 dark:border-gray-700">
+                        <button type="button" onClick={() => applyFormatting('bold')} className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded transition-all text-gray-500" title="Negrito"><Bold className="w-3 h-3" /></button>
+                        <button type="button" onClick={() => applyFormatting('italic')} className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded transition-all text-gray-500" title="Itálico"><Italic className="w-3 h-3" /></button>
+                        <div className="w-px h-3 bg-gray-200 dark:bg-gray-700 mx-0.5" />
+                        <button type="button" onClick={() => applyFormatting('list')} className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded transition-all text-gray-500" title="Lista"><List className="w-3 h-3" /></button>
+                        <button type="button" onClick={() => applyFormatting('list-ordered')} className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded transition-all text-gray-500" title="Lista Numerada"><ListOrdered className="w-3 h-3" /></button>
+                        <div className="w-px h-3 bg-gray-200 dark:bg-gray-700 mx-0.5" />
+                        <button type="button" onClick={() => applyFormatting('link')} className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded transition-all text-gray-500" title="Link"><LinkIcon className="w-3 h-3" /></button>
+                        <button type="button" onClick={() => applyFormatting('code')} className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded transition-all text-gray-500" title="Código"><Code className="w-3 h-3" /></button>
+                      </div>
+                    </div>
+                    
                     <textarea
+                      ref={textareaRef}
                       placeholder="Descreva o que o assistente deve fazer, cole links, referências ou diretrizes específicas..."
-                      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white dark:bg-[#16191F] dark:text-white min-h-[240px] resize-none"
+                      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white dark:bg-[#16191F] dark:text-white min-h-[240px] resize-none font-mono text-sm"
                       value={context}
                       onChange={(e) => setContext(e.target.value)}
                       required
                     />
-                    <p className="text-[10px] text-gray-400 italic">
-                      A IA identificará automaticamente o papel ideal com base na sua descrição.
-                    </p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] text-gray-400 italic">
+                        A IA identificará automaticamente o papel ideal com base na sua descrição.
+                      </p>
+                      
+                      {activeModel === 'gemini' && (
+                        <button
+                          type="button"
+                          onClick={() => setIsHighThinking(!isHighThinking)}
+                          className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold transition-all border ${
+                            isHighThinking 
+                              ? 'bg-purple-50 border-purple-200 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-300' 
+                              : 'bg-gray-50 border-gray-200 text-gray-500 dark:bg-gray-800/50 dark:border-gray-700 dark:text-gray-400'
+                          }`}
+                        >
+                          <Zap className={`w-3 h-3 ${isHighThinking ? 'fill-purple-500 text-purple-500' : ''}`} />
+                          High Thinking
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {generationError && (
@@ -992,6 +1285,103 @@ export default function App() {
                   ))}
                 </div>
               )}
+            </motion.div>
+          )}
+
+          {activeView === 'chat' && (
+            <motion.div 
+              key="chat"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="max-w-4xl mx-auto h-[calc(100vh-240px)] flex flex-col bg-white dark:bg-[#16191F] border border-gray-200 dark:border-gray-800 rounded-3xl shadow-xl overflow-hidden"
+            >
+              {/* Chat Header */}
+              <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-gray-50/50 dark:bg-gray-800/30">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-green-100 dark:bg-green-900/20 rounded-xl flex items-center justify-center">
+                    <MessageSquare className="w-5 h-5 text-green-600 dark:text-green-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold">Chat da Comunidade</h2>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Tempo Real • {chatMessages.length} mensagens</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex -space-x-2">
+                    {[1, 2, 3].map(i => (
+                      <div key={i} className="w-8 h-8 rounded-full border-2 border-white dark:border-[#16191F] bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-[10px] font-bold">
+                        U{i}
+                      </div>
+                    ))}
+                  </div>
+                  <span className="text-xs text-gray-400 ml-2">Online</span>
+                </div>
+              </div>
+
+              {/* Messages Area */}
+              <div className="flex-grow overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                {isChatLoading ? (
+                  <div className="flex flex-col items-center justify-center h-full space-y-4">
+                    <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+                    <p className="text-sm text-gray-400">Carregando histórico...</p>
+                  </div>
+                ) : chatMessages.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
+                    <div className="w-16 h-16 bg-gray-50 dark:bg-gray-800/50 rounded-full flex items-center justify-center">
+                      <MessageSquare className="w-8 h-8 text-gray-300 dark:text-gray-600" />
+                    </div>
+                    <p className="text-gray-400 dark:text-gray-500">Nenhuma mensagem ainda. Seja o primeiro a falar!</p>
+                  </div>
+                ) : (
+                  chatMessages.map((msg, i) => {
+                    const isMe = msg.user_id === user?.id;
+                    return (
+                      <motion.div 
+                        key={msg.id || i}
+                        initial={{ opacity: 0, x: isMe ? 20 : -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div className={`max-w-[80%] space-y-1 ${isMe ? 'items-end' : 'items-start'}`}>
+                          <div className={`flex items-center gap-2 mb-1 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{msg.display_name}</span>
+                            <span className="text-[9px] text-gray-300">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                          <div className={`px-4 py-3 rounded-2xl text-sm shadow-sm ${
+                            isMe 
+                              ? 'bg-blue-600 text-white rounded-tr-none' 
+                              : 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-tl-none'
+                          }`}>
+                            {msg.content}
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  })
+                )}
+                <div ref={chatEndRef} />
+              </div>
+
+              {/* Input Area */}
+              <div className="p-6 border-t border-gray-100 dark:border-gray-800 bg-gray-50/30 dark:bg-gray-800/10">
+                <form onSubmit={sendChatMessage} className="flex items-center gap-3">
+                  <input 
+                    type="text"
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    placeholder="Digite sua mensagem..."
+                    className="flex-grow px-5 py-3 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0A0C10] text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  />
+                  <button 
+                    type="submit"
+                    disabled={!newMessage.trim()}
+                    className="p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl shadow-lg shadow-blue-600/20 transition-all disabled:opacity-50 disabled:shadow-none"
+                  >
+                    <Send className="w-5 h-5" />
+                  </button>
+                </form>
+              </div>
             </motion.div>
           )}
 

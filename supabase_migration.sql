@@ -95,3 +95,27 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- Tabela de Mensagens do Chat
+CREATE TABLE IF NOT EXISTS messages (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  display_name TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Habilitar RLS para Mensagens
+ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+
+-- Políticas para Mensagens
+CREATE POLICY "Mensagens são visíveis para todos os usuários autorizados" ON messages
+  FOR SELECT USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_authorized = true)
+  );
+
+CREATE POLICY "Usuários autorizados podem inserir mensagens" ON messages
+  FOR INSERT WITH CHECK (
+    auth.uid() = user_id AND 
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_authorized = true)
+  );
