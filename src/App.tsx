@@ -35,6 +35,8 @@ import {
   User as UserIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import Markdown from 'react-markdown';
+import { Toaster, toast } from 'sonner';
 import { generatePrompt } from './services/geminiService';
 import { supabase } from './lib/supabase';
 import { User } from '@supabase/supabase-js';
@@ -165,7 +167,7 @@ export default function App() {
   }, [hfToken, grokKey, ollamaUrl, activeModel]);
 
   useEffect(() => {
-    if (user && activeView === 'admin' && role === 'superadm') {
+    if (user && activeView === 'settings' && role === 'superadm') {
       const fetchProfiles = async () => {
         const { data, error } = await supabase
           .from('profiles')
@@ -298,8 +300,10 @@ export default function App() {
         .eq('id', id);
       
       if (error) throw error;
+      toast.success('Prompt removido do histórico.');
     } catch (error) {
       console.error('Erro ao deletar:', error);
+      toast.error('Erro ao remover o prompt.');
     }
   };
 
@@ -315,8 +319,10 @@ export default function App() {
         .eq('user_id', user.id);
       
       if (error) throw error;
+      toast.success('Histórico limpo com sucesso.');
     } catch (error) {
       console.error('Erro ao limpar histórico:', error);
+      toast.error('Erro ao limpar o histórico.');
     }
   };
 
@@ -364,9 +370,12 @@ export default function App() {
       };
 
       setResult(newResult);
+      toast.success('Prompt gerado com sucesso!');
     } catch (error: any) {
       console.error('Erro ao gerar:', error);
-      setGenerationError(error.message || 'Ocorreu um erro ao gerar o prompt. Tente novamente.');
+      const msg = error.message || 'Ocorreu um erro ao gerar o prompt. Tente novamente.';
+      setGenerationError(msg);
+      toast.error(msg);
     } finally {
       setIsLoading(false);
     }
@@ -420,6 +429,7 @@ export default function App() {
     if (result) {
       navigator.clipboard.writeText(result.content);
       setCopied(true);
+      toast.success('Prompt copiado para a área de transferência!');
       setTimeout(() => setCopied(false), 2000);
     }
   };
@@ -584,62 +594,69 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] dark:bg-[#0F1115] text-[#1A1A1A] dark:text-gray-100 font-sans selection:bg-blue-100 dark:selection:bg-blue-900 transition-colors duration-300">
+    <div className="min-h-screen bg-[#FDFDFD] dark:bg-[#0A0C10] text-[#1A1A1A] dark:text-gray-100 font-sans selection:bg-blue-100 dark:selection:bg-blue-900/40 transition-colors duration-500">
+      <Toaster position="top-right" richColors theme={theme === 'dark' ? 'dark' : 'light'} />
       {/* Header */}
-      <header className="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-[#16191F] sticky top-0 z-10 transition-colors duration-300">
-        <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveView('generator')}>
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                <Wand2 className="text-white w-5 h-5" />
+      <header className="sticky top-0 z-50 glass-card border-b border-gray-200/50 dark:border-gray-800/50 transition-all duration-300">
+        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+          <div className="flex items-center gap-10">
+            <div className="flex items-center gap-3 cursor-pointer group" onClick={() => setActiveView('generator')}>
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/20 group-hover:scale-105 transition-transform">
+                <Wand2 className="text-white w-6 h-6" />
               </div>
-              <h1 className="text-lg font-semibold tracking-tight">Prompt Architect <span className="text-blue-600 dark:text-blue-400">Pro</span></h1>
+              <div className="flex flex-col">
+                <h1 className="text-xl font-bold tracking-tight leading-none">Prompt Architect</h1>
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-600 dark:text-blue-400">Professional Edition</span>
+              </div>
             </div>
             
-            <nav className="hidden md:flex items-center gap-1">
-              <button 
-                onClick={() => setActiveView('generator')}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${activeView === 'generator' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
-              >
-                Gerador
-              </button>
-              <button 
-                onClick={() => setActiveView('history')}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${activeView === 'history' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
-              >
-                Histórico
-              </button>
-              <button 
-                onClick={() => setActiveView('settings')}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${activeView === 'settings' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
-              >
-                Configurações {role === 'superadm' && <span className="ml-1 text-[10px] bg-purple-100 text-purple-600 px-1 rounded">Admin</span>}
-              </button>
+            <nav className="hidden md:flex items-center gap-2">
+              {[
+                { id: 'generator', label: 'Gerador', icon: Wand2 },
+                { id: 'history', label: 'Histórico', icon: History },
+                { id: 'settings', label: 'Configurações', icon: Settings }
+              ].map((item) => (
+                <button 
+                  key={item.id}
+                  onClick={() => setActiveView(item.id as View)}
+                  className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 ${
+                    activeView === item.id 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
+                      : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+                  }`}
+                >
+                  <item.icon className="w-4 h-4" />
+                  {item.label}
+                  {item.id === 'settings' && role === 'superadm' && (
+                    <span className="text-[9px] bg-purple-500 text-white px-1.5 py-0.5 rounded-full uppercase">Admin</span>
+                  )}
+                </button>
+              ))}
             </nav>
           </div>
           
-          <div className="flex items-center gap-4 text-sm text-gray-500 font-medium">
+          <div className="flex items-center gap-4">
             <button 
               onClick={toggleTheme}
-              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400"
+              className="p-2.5 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-all text-gray-500 dark:text-gray-400 border border-transparent hover:border-gray-200 dark:hover:border-gray-700"
               title={theme === 'light' ? 'Ativar Modo Escuro' : 'Ativar Modo Claro'}
             >
               {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
             </button>
-            <div className="hidden sm:flex items-center gap-2 bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-full">
-              <div className={`w-2 h-2 rounded-full ${role === 'superadm' ? 'bg-purple-500' : role === 'admin' ? 'bg-blue-500' : 'bg-green-500'}`} />
-              <span className="text-xs font-bold text-gray-600 dark:text-gray-300">
-                {user.user_metadata?.display_name || user.email?.split('@')[0]}
-                {role !== 'user' && (
-                  <span className={`ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-tighter ${role === 'superadm' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
-                    {role}
-                  </span>
-                )}
-              </span>
+            
+            <div className="hidden sm:flex items-center gap-3 bg-gray-100 dark:bg-gray-800/50 border border-gray-200/50 dark:border-gray-700/50 px-4 py-2 rounded-2xl">
+              <div className={`w-2.5 h-2.5 rounded-full animate-pulse ${role === 'superadm' ? 'bg-purple-500' : role === 'admin' ? 'bg-blue-500' : 'bg-green-500'}`} />
+              <div className="flex flex-col items-start">
+                <span className="text-xs font-bold text-gray-700 dark:text-gray-200">
+                  {user.user_metadata?.display_name || user.email?.split('@')[0]}
+                </span>
+                <span className="text-[9px] uppercase tracking-widest text-gray-400 font-bold">{role}</span>
+              </div>
             </div>
+
             <button 
               onClick={handleSignOut}
-              className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-500 dark:text-gray-400 hover:text-red-600 transition-colors"
+              className="p-2.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-600 transition-all border border-transparent hover:border-red-100 dark:hover:border-red-900/30"
               title="Sair"
             >
               <LogOut className="w-5 h-5" />
@@ -648,7 +665,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-12">
+      <main className="max-w-7xl mx-auto px-6 py-16">
         <AnimatePresence mode="wait">
           {activeView === 'generator' && (
             <motion.div 
@@ -659,13 +676,36 @@ export default function App() {
               className="grid grid-cols-1 lg:grid-cols-12 gap-12"
             >
               {/* Left Column: Input Form */}
-              <div className="lg:col-span-5 space-y-8">
-                <section>
-                  <h2 className="text-2xl font-bold mb-2">Crie seu Assistente</h2>
-                  <p className="text-gray-500 dark:text-gray-400 text-sm leading-relaxed">
-                    Defina o propósito e forneça o contexto necessário. Nossa IA aplicará frameworks como CO-STAR e delimitadores estruturais para você.
+              <div className="lg:col-span-5 space-y-10">
+                <section className="relative">
+                  <div className="absolute -left-6 top-0 bottom-0 w-1 bg-blue-600 rounded-full hidden lg:block" />
+                  <h2 className="text-4xl font-bold mb-4 tracking-tight">Arquitetura de <br /> <span className="text-blue-600">Alta Performance</span></h2>
+                  <p className="text-gray-500 dark:text-gray-400 text-base leading-relaxed max-w-md">
+                    Transforme ideias brutas em instruções de nível enterprise. Aplicamos heurísticas de design e frameworks de engenharia de prompts automaticamente.
                   </p>
                 </section>
+
+                {/* UX Diagnosis Section (New) */}
+                <div className="p-6 rounded-3xl bg-blue-50/50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 space-y-4">
+                  <div className="flex items-center gap-3 text-blue-700 dark:text-blue-400">
+                    <ShieldCheck className="w-5 h-5" />
+                    <h3 className="text-sm font-bold uppercase tracking-wider">Diagnóstico de UX</h3>
+                  </div>
+                  <ul className="space-y-2">
+                    {[
+                      { label: 'Redução de Ruído', desc: 'Interface focada no fluxo de trabalho.' },
+                      { label: 'Hierarquia Visual', desc: 'Configuração → Processamento → Resultado.' },
+                      { label: 'Feedback em Tempo Real', desc: 'Status visual de cada etapa da IA.' }
+                    ].map((item, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <div className="w-1 h-1 rounded-full bg-blue-400 mt-2 shrink-0" />
+                        <p className="text-[11px] text-gray-600 dark:text-gray-400">
+                          <span className="font-bold text-gray-800 dark:text-gray-200">{item.label}:</span> {item.desc}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
 
                 {/* Templates Section */}
                 <div className="space-y-3">
@@ -818,8 +858,8 @@ export default function App() {
                       </div>
                       
                       <div className="p-8 overflow-y-auto max-h-[600px] prose prose-sm prose-blue dark:prose-invert max-w-none">
-                        <div className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-gray-700 dark:text-gray-300">
-                          {result?.content}
+                        <div className="markdown-body">
+                          <Markdown>{result?.content}</Markdown>
                         </div>
                       </div>
 
@@ -906,9 +946,11 @@ export default function App() {
                           {item.timestamp.toLocaleDateString()}
                         </span>
                       </div>
-                      <p className="text-sm text-gray-600 dark:text-gray-300 line-clamp-4 mb-6 font-mono bg-gray-50 dark:bg-gray-800/50 p-4 rounded-xl border border-gray-100 dark:border-gray-800 flex-grow">
-                        {item.content}
-                      </p>
+                      <div className="text-sm text-gray-600 dark:text-gray-300 line-clamp-4 mb-6 font-mono bg-gray-50 dark:bg-gray-800/50 p-4 rounded-xl border border-gray-100 dark:border-gray-800 flex-grow overflow-hidden">
+                        <div className="markdown-body scale-90 origin-top-left">
+                          <Markdown>{item.content}</Markdown>
+                        </div>
+                      </div>
                       <div className="flex items-center justify-between mt-auto">
                         <div className="flex items-center gap-1">
                           {[1, 2, 3, 4, 5].map((star) => (

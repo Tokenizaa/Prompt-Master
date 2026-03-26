@@ -125,34 +125,48 @@ async function generateWithHuggingFace(prompt: string, token?: string) {
   const hfToken = token || process.env.HUGGINGFACE_TOKEN;
   if (!hfToken) throw new Error("Token do Hugging Face não configurado nas configurações ou no .env.");
   
-  const fullPrompt = `${SYSTEM_PROMPT}\n\n${prompt}`;
-  
-  const response = await fetch(
-    "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2",
-    {
-      headers: { Authorization: `Bearer ${hfToken}`, "Content-Type": "application/json" },
-      method: "POST",
-      body: JSON.stringify({ inputs: fullPrompt, parameters: { max_new_tokens: 1000 } }),
-    }
-  );
-  
-  const result = await response.json();
-  if (result.error) throw new Error(`HF Error: ${result.error}`);
-  return result[0]?.generated_text || result.generated_text || "Erro na resposta do Hugging Face.";
+  try {
+    const response = await fetch(
+      "https://router.huggingface.co/v1/chat/completions",
+      {
+        headers: { Authorization: `Bearer ${hfToken}`, "Content-Type": "application/json" },
+        method: "POST",
+        body: JSON.stringify({
+          model: "mistralai/Mistral-7B-Instruct-v0.2",
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: prompt }
+          ],
+          max_tokens: 1000
+        }),
+      }
+    );
+    
+    const result = await response.json();
+    if (result.error) throw new Error(`HF Error: ${result.error.message || JSON.stringify(result.error)}`);
+    return result.choices?.[0]?.message?.content || "Erro na resposta do Hugging Face.";
+  } catch (err) {
+    throw new Error(`Erro ao conectar com Hugging Face: ${err instanceof Error ? err.message : 'Verifique seu token e o modelo.'}`);
+  }
 }
 
 async function generateWithGrok(prompt: string, apiKey?: string) {
-  const groqKey = apiKey || process.env.GROQ_API_KEY;
-  if (!groqKey) throw new Error("API Key do Grok não configurada nas configurações ou no .env.");
+  const key = apiKey || process.env.GROQ_API_KEY;
+  if (!key) throw new Error("API Key do Grok/Groq não configurada nas configurações ou no .env.");
   
-  const response = await fetch("https://api.x.ai/v1/chat/completions", {
+  // Se a chave começar com gsk_, usamos o endpoint da Groq
+  const isGroq = key.startsWith('gsk_');
+  const endpoint = isGroq ? "https://api.groq.com/openai/v1/chat/completions" : "https://api.x.ai/v1/chat/completions";
+  const model = isGroq ? "llama-3.3-70b-versatile" : "grok-beta";
+
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${groqKey}`
+      "Authorization": `Bearer ${key}`
     },
     body: JSON.stringify({
-      model: "grok-beta",
+      model: model,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: prompt }
@@ -162,8 +176,8 @@ async function generateWithGrok(prompt: string, apiKey?: string) {
   });
 
   const result = await response.json();
-  if (result.error) throw new Error(`Grok Error: ${result.error.message}`);
-  return result.choices?.[0]?.message?.content || "Erro na resposta do Grok.";
+  if (result.error) throw new Error(`${isGroq ? 'Groq' : 'Grok'} Error: ${result.error.message || JSON.stringify(result.error)}`);
+  return result.choices?.[0]?.message?.content || "Erro na resposta.";
 }
 
 async function generateWithOllama(prompt: string, url?: string) {
