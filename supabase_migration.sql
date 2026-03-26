@@ -119,3 +119,55 @@ CREATE POLICY "Usuários autorizados podem inserir mensagens" ON messages
     auth.uid() = user_id AND 
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_authorized = true)
   );
+
+-- Habilitar a extensão pgvector
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Tabela para a base de conhecimento (RAG)
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  content TEXT NOT NULL,
+  metadata JSONB,
+  embedding VECTOR(3072), -- Dimensão do gemini-embedding-2-preview
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Habilitar RLS para Knowledge Chunks
+ALTER TABLE knowledge_chunks ENABLE ROW LEVEL SECURITY;
+
+-- Políticas para Knowledge Chunks
+CREATE POLICY "Leitura para usuários autorizados" ON knowledge_chunks
+  FOR SELECT USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_authorized = true)
+  );
+
+-- 1. Remover a função antiga para evitar conflitos de assinatura
+DROP FUNCTION IF EXISTS match_knowledge_chunks(vector, float8, integer);
+
+-- 2. Criar a função com tipos explícitos
+CREATE OR REPLACE FUNCTION match_knowledge_chunks (
+  query_embedding VECTOR(3072),
+  match_threshold FLOAT8,
+  match_count INTEGER
+)
+RETURNS TABLE (
+  id UUID,
+  content TEXT,
+  metadata JSONB,
+  similarity FLOAT8
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    knowledge_chunks.id,
+    knowledge_chunks.content,
+    knowledge_chunks.metadata,
+    1 - (knowledge_chunks.embedding <=> query_embedding) AS similarity
+  FROM knowledge_chunks
+  WHERE 1 - (knowledge_chunks.embedding <=> query_embedding) > match_threshold
+  ORDER BY similarity DESC
+  LIMIT match_count;
+END;
+$$;

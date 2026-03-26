@@ -44,12 +44,12 @@ import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
 import { Toaster, toast } from 'sonner';
 import { generatePrompt } from './services/geminiService';
+import { ingestKnowledgeBase, queryKnowledgeBase } from './services/ragService';
 import { supabase } from './lib/supabase';
 import { User } from '@supabase/supabase-js';
 import { DEFAULT_TEMPLATES, ICON_MAP, Template } from './config/templates';
 import * as LucideIcons from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
-import { queryKnowledgeBase } from './services/ragService';
 
 interface GeneratedResult {
   id?: string;
@@ -217,6 +217,20 @@ export default function App() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, activeView]);
 
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSyncKnowledgeBase = async () => {
+    setIsSyncing(true);
+    try {
+      const result = await ingestKnowledgeBase();
+      toast.success(`Base de conhecimento sincronizada! ${result.chunksIngested} chunks processados.`);
+    } catch (err: any) {
+      toast.error(`Erro na sincronização: ${err.message}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const sendChatMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!socket || !newMessage.trim() || !user) return;
@@ -381,10 +395,11 @@ export default function App() {
       }
     });
 
-    // Sort templates by score descending
+    // Sort templates by score descending and limit to top 3
     return templates
       .filter(t => scores.has(t.title))
-      .sort((a, b) => (scores.get(b.title) || 0) - (scores.get(a.title) || 0));
+      .sort((a, b) => (scores.get(b.title) || 0) - (scores.get(a.title) || 0))
+      .slice(0, 3);
   }, [context, templates]);
 
   const applyFormatting = (type: 'bold' | 'italic' | 'list' | 'list-ordered' | 'link' | 'code') => {
@@ -921,16 +936,29 @@ export default function App() {
 
                   {/* Suggested Templates (Intelligent System) */}
                   <AnimatePresence>
-                    {suggestedTemplates.length > 0 && (
+                    {suggestedTemplates.length > 0 ? (
                       <motion.div 
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: 'auto' }}
                         exit={{ opacity: 0, height: 0 }}
                         className="space-y-2 overflow-hidden"
                       >
-                        <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
-                          <Sparkles className="w-3 h-3" /> Sugestões Inteligentes
-                        </label>
+                        <div className="flex items-center justify-between">
+                          <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                            <Sparkles className="w-3 h-3" /> Sugestões Inteligentes
+                          </label>
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              setContext('');
+                              setAssistantType('');
+                              toast.info('Contexto limpo');
+                            }}
+                            className="text-[9px] font-bold uppercase text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" /> Limpar
+                          </button>
+                        </div>
                         <div className="flex flex-wrap gap-2">
                           {suggestedTemplates.map((t, i) => (
                             <button
@@ -948,6 +976,26 @@ export default function App() {
                             </button>
                           ))}
                         </div>
+                      </motion.div>
+                    ) : context.trim().length > 10 && (
+                      <motion.div 
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="flex items-center justify-between py-1 overflow-hidden"
+                      >
+                        <p className="text-[9px] text-gray-400 italic">Nenhuma sugestão encontrada para este contexto.</p>
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            setContext('');
+                            setAssistantType('');
+                            toast.info('Contexto limpo');
+                          }}
+                          className="text-[9px] font-bold uppercase text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1"
+                        >
+                          <Trash2 className="w-2.5 h-2.5" /> Limpar Sugestões
+                        </button>
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -1508,16 +1556,32 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl">
-                      <div className="flex items-center gap-3">
-                        <Database className="w-5 h-5 text-blue-500" />
-                        <div>
-                          <p className="text-sm font-medium">Sincronização</p>
-                          <p className="text-[11px] text-gray-500">Seu histórico está seguro no Supabase.</p>
-                        </div>
+                    <div className="pt-6 border-t border-gray-100 dark:border-gray-800">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Database className="w-5 h-5 text-green-500" />
+                        <h3 className="text-lg font-bold">Base de Conhecimento (RAG)</h3>
                       </div>
-                      <div className="w-10 h-5 bg-green-500 rounded-full relative">
-                        <div className="absolute right-1 top-1 w-3 h-3 bg-white rounded-full" />
+                      <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl space-y-4">
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Sincronize o conteúdo do Google Docs com o banco de dados vetorial para buscas mais precisas e rápidas.
+                        </p>
+                        <button 
+                          onClick={handleSyncKnowledgeBase}
+                          disabled={isSyncing}
+                          className="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-green-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                          {isSyncing ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Sincronizando...
+                            </>
+                          ) : (
+                            <>
+                              <Database className="w-4 h-4" />
+                              Sincronizar Agora
+                            </>
+                          )}
+                        </button>
                       </div>
                     </div>
                   </div>

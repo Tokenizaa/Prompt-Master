@@ -1,4 +1,5 @@
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import { queryKnowledgeBase } from "./ragService";
 
 const KNOWLEDGE_BASE_URL = "https://docs.google.com/document/d/1fZe61vRrvE9Pqe-4dthsTjnAN7wmTeLCQoYWhppL45k/edit?usp=sharing";
 
@@ -85,9 +86,23 @@ export interface AIConfig {
 export async function generatePrompt(context: string, config?: AIConfig, assistantType?: string) {
   const activeModel = config?.activeModel || 'gemini';
   
+  // 1. Retrieve relevant context from vector database (RAG)
+  let ragContext = "";
+  try {
+    // We use the user's input context to find relevant chunks in the knowledge base
+    ragContext = await queryKnowledgeBase(context);
+  } catch (err) {
+    console.warn("Falha ao recuperar contexto RAG para geração de prompt:", err);
+  }
+
   const userPrompt = `
     ${assistantType ? `Tipo de Assistente Sugerido: ${assistantType}` : ''}
-    Contexto e Fontes Fornecidos: ${context}
+    
+    # CONTEXTO DO USUÁRIO:
+    ${context}
+    
+    # CONTEXTO ADICIONAL (BASE DE CONHECIMENTO):
+    ${ragContext}
     
     Com base no contexto acima ${assistantType ? `e no tipo de assistente sugerido` : ''}:
     1. Identifique e defina o "Tipo de Assistente" ideal (se o tipo sugerido for adequado, use-o ou refine-o).
@@ -115,7 +130,7 @@ async function generateWithGemini(prompt: string, isHighThinking?: boolean) {
   if (!apiKey) throw new Error("API Key do Gemini não configurada.");
   
   const ai = new GoogleGenAI({ apiKey });
-  const modelName = isHighThinking ? "gemini-3.1-pro-preview" : "gemini-3-flash-preview";
+  const modelName = isHighThinking ? "gemini-3.1-pro-preview" : "gemini-1.5-flash-latest";
 
   try {
     const response = await ai.models.generateContent({
@@ -125,7 +140,6 @@ async function generateWithGemini(prompt: string, isHighThinking?: boolean) {
         systemInstruction: SYSTEM_PROMPT,
         temperature: isHighThinking ? 1 : 0.7,
         thinkingConfig: isHighThinking ? { thinkingLevel: ThinkingLevel.HIGH } : undefined,
-        tools: [{ urlContext: {} }]
       },
     });
     return response.text || "Erro: Resposta vazia do Gemini.";
