@@ -122,14 +122,15 @@ async function generateWithGemini(prompt: string) {
 }
 
 async function generateWithHuggingFace(prompt: string, token?: string) {
-  if (!token) throw new Error("Token do Hugging Face não configurado nas configurações.");
+  const hfToken = token || process.env.HUGGINGFACE_TOKEN;
+  if (!hfToken) throw new Error("Token do Hugging Face não configurado nas configurações ou no .env.");
   
   const fullPrompt = `${SYSTEM_PROMPT}\n\n${prompt}`;
   
   const response = await fetch(
     "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2",
     {
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${hfToken}`, "Content-Type": "application/json" },
       method: "POST",
       body: JSON.stringify({ inputs: fullPrompt, parameters: { max_new_tokens: 1000 } }),
     }
@@ -141,13 +142,14 @@ async function generateWithHuggingFace(prompt: string, token?: string) {
 }
 
 async function generateWithGrok(prompt: string, apiKey?: string) {
-  if (!apiKey) throw new Error("API Key do Grok não configurada nas configurações.");
+  const groqKey = apiKey || process.env.GROQ_API_KEY;
+  if (!groqKey) throw new Error("API Key do Grok não configurada nas configurações ou no .env.");
   
   const response = await fetch("https://api.x.ai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
+      "Authorization": `Bearer ${groqKey}`
     },
     body: JSON.stringify({
       model: "grok-beta",
@@ -164,16 +166,23 @@ async function generateWithGrok(prompt: string, apiKey?: string) {
   return result.choices?.[0]?.message?.content || "Erro na resposta do Grok.";
 }
 
-async function generateWithOllama(prompt: string, url: string = "http://localhost:11434") {
+async function generateWithOllama(prompt: string, url?: string) {
+  const ollamaUrl = url || (import.meta as any).env.VITE_OLLAMA_BASE_URL || "http://localhost:11434";
+  const model = (import.meta as any).env.VITE_OLLAMA_MODEL || "llama3";
+  const temperature = parseFloat((import.meta as any).env.VITE_OLLAMA_TEMPERATURE || "0.7");
+
   try {
-    const response = await fetch(`${url}/api/generate`, {
+    const response = await fetch(`${ollamaUrl}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "llama3",
+        model: model,
         system: SYSTEM_PROMPT,
         prompt: prompt,
-        stream: false
+        stream: false,
+        options: {
+          temperature: temperature
+        }
       })
     });
 
