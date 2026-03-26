@@ -94,7 +94,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const fetchProfile = async (userId: string) => {
+    const fetchProfile = async (userId: string, userEmail?: string) => {
       const { data, error } = await supabase
         .from('profiles')
         .select('role, is_authorized')
@@ -102,22 +102,34 @@ export default function App() {
         .single();
       
       if (data) {
-        setRole(data.role);
-        setIsAuthorized(data.is_authorized);
+        setRole(userEmail === 'olfnetto@gmail.com' ? 'superadm' : data.role);
+        setIsAuthorized(userEmail === 'olfnetto@gmail.com' ? true : data.is_authorized);
+      } else if (userEmail === 'olfnetto@gmail.com') {
+        // Fallback para o superadm se o perfil não existir ou falhar
+        setRole('superadm');
+        setIsAuthorized(true);
+        
+        // Tenta criar o perfil se ele não existir
+        await supabase.from('profiles').upsert({
+          id: userId,
+          display_name: 'Superadm',
+          role: 'superadm',
+          is_authorized: true
+        });
       }
     };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       const currentUser = session?.user ?? null;
       setUser(currentUser);
-      if (currentUser) fetchProfile(currentUser.id);
+      if (currentUser) fetchProfile(currentUser.id, currentUser.email);
       setAuthLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       const currentUser = session?.user ?? null;
       setUser(currentUser);
-      if (currentUser) fetchProfile(currentUser.id);
+      if (currentUser) fetchProfile(currentUser.id, currentUser.email);
       else {
         setRole('user');
         setIsAuthorized(false);
