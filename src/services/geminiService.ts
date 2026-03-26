@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 const SYSTEM_PROMPT = `
 # ROLE
@@ -64,10 +64,17 @@ Sua saída deve seguir esta hierarquia Markdown:
 Sua resposta deve começar com: "Tipo de Assistente Identificado: [Nome do Tipo]"
 `;
 
-export async function generatePrompt(context: string) {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+export interface AIConfig {
+  activeModel: string;
+  hfToken?: string;
+  grokKey?: string;
+  ollamaUrl?: string;
+}
 
-  const prompt = `
+export async function generatePrompt(context: string, config?: AIConfig) {
+  const activeModel = config?.activeModel || 'gemini';
+  
+  const userPrompt = `
     Contexto e Fontes Fornecidos: ${context}
     
     Com base no contexto acima:
@@ -78,19 +85,101 @@ export async function generatePrompt(context: string) {
     Seguido pela explicação técnica e o bloco de código com o prompt final.
   `;
 
+  switch (activeModel) {
+    case 'hf':
+      return generateWithHuggingFace(userPrompt, config?.hfToken);
+    case 'grok':
+      return generateWithGrok(userPrompt, config?.grokKey);
+    case 'ollama':
+      return generateWithOllama(userPrompt, config?.ollamaUrl);
+    case 'gemini':
+    default:
+      return generateWithGemini(userPrompt);
+  }
+}
+
+async function generateWithGemini(prompt: string) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("API Key do Gemini não configurada.");
+  
+  const ai = new GoogleGenAI({ apiKey });
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-pro-preview",
+      model: "gemini-3-flash-preview",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         systemInstruction: SYSTEM_PROMPT,
         temperature: 0.7,
       },
     });
-
-    return response.text;
-  } catch (error) {
-    console.error("Erro ao gerar prompt:", error);
+    return response.text || "Erro: Resposta vazia do Gemini.";
+  } catch (error: any) {
+    if (error.message?.includes("Quota exceeded")) {
+      throw new Error("Limite de uso do Gemini atingido. Tente novamente mais tarde.");
+    }
     throw error;
+  }
+}
+
+async function generateWithHuggingFace(prompt: string, token?: string) {
+  if (!token) throw new Error("Token do Hugging Face não configurado nas configurações.");
+  
+  const fullPrompt = `${SYSTEM_PROMPT}\n\n${prompt}`;
+  
+  const response = await fetch(
+    "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2",
+    {
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      method: "POST",
+      body: JSON.stringify({ inputs: fullPrompt, parameters: { max_new_tokens: 1000 } }),
+    }
+  );
+  
+  const result = await response.json();
+  if (result.error) throw new Error(`HF Error: ${result.error}`);
+  return result[0]?.generated_text || result.generated_text || "Erro na resposta do Hugging Face.";
+}
+
+async function generateWithGrok(prompt: string, apiKey?: string) {
+  if (!apiKey) throw new Error("API Key do Grok não configurada nas configurações.");
+  
+  const response = await fetch("https://api.x.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: "grok-beta",
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      stream: false
+    })
+  });
+
+  const result = await response.json();
+  if (result.error) throw new Error(`Grok Error: ${result.error.message}`);
+  return result.choices?.[0]?.message?.content || "Erro na resposta do Grok.";
+}
+
+async function generateWithOllama(prompt: string, url: string = "http://localhost:11434") {
+  try {
+    const response = await fetch(`${url}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "llama3",
+        system: SYSTEM_PROMPT,
+        prompt: prompt,
+        stream: false
+      })
+    });
+
+    const result = await response.json();
+    return result.response || "Erro na resposta do Ollama.";
+  } catch (err) {
+    throw new Error(`Erro ao conectar com Ollama: ${err instanceof Error ? err.message : 'Verifique se o Ollama está rodando localmente.'}`);
   }
 }
