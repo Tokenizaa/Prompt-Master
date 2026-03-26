@@ -83,6 +83,15 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [authError, setAuthError] = useState('');
+  const [isSupabaseConfigured, setIsSupabaseConfigured] = useState(true);
+
+  useEffect(() => {
+    const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
+    const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseAnonKey) {
+      setIsSupabaseConfigured(false);
+    }
+  }, []);
 
   useEffect(() => {
     const fetchProfile = async (userId: string) => {
@@ -386,6 +395,29 @@ export default function App() {
       resultRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [result]);
+
+  if (!isSupabaseConfigured) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-4 ${theme === 'dark' ? 'bg-[#0A0C10] text-white' : 'bg-gray-50 text-gray-900'}`}>
+        <div className="max-w-md w-full bg-white dark:bg-[#16191F] border border-gray-200 dark:border-gray-800 rounded-3xl p-8 shadow-xl text-center space-y-6">
+          <div className="w-20 h-20 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center mx-auto">
+            <AlertCircle className="w-10 h-10 text-red-600 dark:text-red-400" />
+          </div>
+          <h2 className="text-2xl font-bold">Configuração Necessária</h2>
+          <p className="text-gray-500 dark:text-gray-400">
+            As variáveis de ambiente do Supabase não foram encontradas. Por favor, adicione as seguintes chaves nas configurações do AI Studio:
+          </p>
+          <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl text-left space-y-2 font-mono text-xs">
+            <p className="text-blue-600 dark:text-blue-400">VITE_SUPABASE_URL</p>
+            <p className="text-blue-600 dark:text-blue-400">VITE_SUPABASE_ANON_KEY</p>
+          </div>
+          <p className="text-sm text-gray-500">
+            Após adicionar as chaves, a página será atualizada automaticamente.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (authLoading) {
     return (
